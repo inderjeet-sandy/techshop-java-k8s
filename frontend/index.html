@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TechShop Java</title>
+
+    <!-- ============================================================
+         NEW RELIC BROWSER AGENT
+         Replace this comment block with your actual NR Browser snippet.
+         Get it from: New Relic → Add Data → Browser → TechShop-Frontend
+         Copy the JavaScript snippet and paste it here.
+         ============================================================ -->
+
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav>
+    <h1>☕ TechShop Java</h1>
+    <input type="text" id="search-input" placeholder="Search products..." oninput="handleSearch(this.value)">
+    <button onclick="loadProducts()">All Products</button>
+</nav>
+
+<!-- Chaos engineering bar — toggle NR demo scenarios -->
+<div id="chaos-bar">
+    <span>🔥 Chaos:</span>
+    <button id="btn-slow"        onclick="toggleChaos('slow-checkout')">Slow Checkout</button>
+    <button id="btn-n1"          onclick="toggleChaos('n-plus-one')">N+1 Queries</button>
+    <button id="btn-errors"      onclick="toggleChaos('payment-errors')">Payment Errors</button>
+    <button id="btn-cardinality" onclick="toggleChaos('cardinality-bomb')">Cardinality Bomb</button>
+    <span id="chaos-status" style="margin-left:auto; color:#68d391;"></span>
+</div>
+
+<main>
+    <div id="status-area"></div>
+    <div class="categories" id="categories"></div>
+    <div class="products"   id="products"><div class="loading">Loading products...</div></div>
+</main>
+
+<!-- Floating cart button -->
+<button id="cart-icon" onclick="showCart()">
+    🛒<span id="cart-count">0</span>
+</button>
+
+<!-- Cart modal (injected by app.js) -->
+<div id="modal-container"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

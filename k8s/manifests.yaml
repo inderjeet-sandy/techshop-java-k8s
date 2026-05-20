@@ -1,0 +1,281 @@
+---
+# 00 - Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: techshop-java
+  labels:
+    app.kubernetes.io/name: techshop-java
+
+---
+# 02 - ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: techshop-java-config
+  namespace: techshop-java
+data:
+  NEW_RELIC_APP_NAME: "TechShop-Java-Backend"
+  NEW_RELIC_LOG_LEVEL: "info"
+  SPRING_PROFILES_ACTIVE: "production"
+  SERVER_PORT: "8080"
+  # Micrometer OTLP — DigiCert lesson: NOT micrometer-registry-new-relic
+  MANAGEMENT_OTLP_METRICS_EXPORT_URL: "https://otlp.nr-data.net:4318/v1/metrics"
+  MANAGEMENT_OTLP_METRICS_EXPORT_STEP: "60s"
+  # Chaos flags
+  TECHSHOP_FEATURE_N_PLUS_ONE_ENABLED: "false"
+  TECHSHOP_FEATURE_SLOW_CHECKOUT_ENABLED: "false"
+  TECHSHOP_FEATURE_PAYMENT_ERRORS_ENABLED: "false"
+  TECHSHOP_FEATURE_CARDINALITY_BOMB_ENABLED: "false"
+  TECHSHOP_ASYNC_ORDER_PROCESSING_DELAY: "500"
+
+---
+# 03 - NR XML instrumentation (hot-reloadable, no pod restart needed)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nr-extensions-config
+  namespace: techshop-java
+data:
+  techshop-instrumentation.xml: |
+    <?xml version="1.0" encoding="UTF-8"?>
+    <extension xmlns="https://newrelic.com/docs/java/xsd/v1.0"
+               name="techshop-custom-instrumentation" version="1.0" enabled="true">
+      <instrumentation>
+        <pointcut transactionStartPoint="false">
+          <className>org.flywaydb.core.Flyway</className>
+          <method><n>migrate</n></method>
+        </pointcut>
+      </instrumentation>
+    </extension>
+
+---
+# 04 - Nginx ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: techshop-java
+data:
+  default.conf: |
+    server {
+        listen 80;
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+            try_files $uri $uri/ /index.html;
+        }
+        location /api/ {
+            proxy_pass http://techshop-java-backend-svc:8080;
+            proxy_set_header Host $host;
+            proxy_set_header traceparent $http_traceparent;
+            proxy_set_header tracestate  $http_tracestate;
+            proxy_read_timeout 60s;
+        }
+        location /health {
+            access_log off;
+            return 200 'OK';
+            add_header Content-Type text/plain;
+        }
+    }
+
+---
+# 05 - Backend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: techshop-java-backend
+  namespace: techshop-java
+  labels:
+    app: techshop-java-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: techshop-java-backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: techshop-java-backend
+    spec:
+      containers:
+        - name: backend
+          image: 842919758536.dkr.ecr.us-west-2.amazonaws.com/techshop-java-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: NEW_RELIC_LICENSE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: newrelic-secret
+                  key: license-key
+            # Inject pod metadata into NR transaction attributes
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MY_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -Dnewrelic.config.labels.pod_name=$(MY_POD_NAME)
+                -Dnewrelic.config.labels.node_name=$(MY_NODE_NAME)
+          envFrom:
+            - configMapRef:
+                name: techshop-java-config
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "768Mi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 15
+          volumeMounts:
+            - name: logs
+              mountPath: /app/logs
+            - name: nr-extensions
+              mountPath: /app/extensions
+      volumes:
+        - name: logs
+          emptyDir: {}
+        - name: nr-extensions
+          configMap:
+            name: nr-extensions-config
+      terminationGracePeriodSeconds: 45
+
+---
+# 06 - Backend Service (ClusterIP — internal only)
+apiVersion: v1
+kind: Service
+metadata:
+  name: techshop-java-backend-svc
+  namespace: techshop-java
+spec:
+  selector:
+    app: techshop-java-backend
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
+
+---
+# 07 - Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: techshop-java-frontend
+  namespace: techshop-java
+  labels:
+    app: techshop-java-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: techshop-java-frontend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: techshop-java-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: 842919758536.dkr.ecr.us-west-2.amazonaws.com/techshop-java-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      terminationGracePeriodSeconds: 30
+
+---
+# 08 - Frontend Service (LoadBalancer — public)
+apiVersion: v1
+kind: Service
+metadata:
+  name: techshop-java-frontend-svc
+  namespace: techshop-java
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  selector:
+    app: techshop-java-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+  type: LoadBalancer
+
+---
+# 09 - HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: techshop-java-backend-hpa
+  namespace: techshop-java
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: techshop-java-backend
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 120

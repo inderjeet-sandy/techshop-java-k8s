@@ -1,0 +1,51 @@
+common: &default_settings
+  license_key: <%= ENV["NEW_RELIC_LICENSE_KEY"] %>
+  app_name: <%= ENV["NEW_RELIC_APP_NAME"] || "TechShop-Java-Backend" %>
+  log_level: info
+  log_file_name: newrelic_agent.log
+  log_file_path: /app/logs
+
+  # Distributed Tracing — required for Token API to show linked threads
+  distributed_tracing:
+    enabled: true
+
+  # Transaction Tracer — captures slow transactions as detailed traces
+  transaction_tracer:
+    enabled: true
+    transaction_threshold: 200   # ms — trace anything over 200ms
+    record_sql: obfuscated        # captures SQL but masks values
+    explain_threshold: 500
+    explain_enabled: true
+
+  # Thread Profiler — samples stack traces every 100ms
+  # Shows which methods consume CPU during a profiling session
+  thread_profiler:
+    enabled: true
+
+  # Java Flight Recorder — low-overhead JVM telemetry (JDK 17)
+  jfr:
+    enabled: true
+
+  # Logs in Context — injects trace.id into log lines
+  application_logging:
+    enabled: true
+    forwarding:
+      enabled: true
+      max_samples_stored: 10000
+    local_decorating:
+      enabled: false
+
+  # XML instrumentation hot-reload (mounted from K8s ConfigMap)
+  extensions:
+    reload_modified: true
+
+  # Browser monitoring — disabled here, injected manually in frontend
+  browser_monitoring:
+    auto_instrument: false
+
+development:
+  <<: *default_settings
+  app_name: TechShop-Java-Backend (dev)
+
+production:
+  <<: *default_settings

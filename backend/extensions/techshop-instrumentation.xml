@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extension xmlns="https://newrelic.com/docs/java/xsd/v1.0"
+           name="techshop-custom-instrumentation"
+           version="1.0"
+           enabled="true">
+  <instrumentation>
+    <!-- Flyway migration timing — visible in traces during startup -->
+    <pointcut transactionStartPoint="false">
+      <className>org.flywaydb.core.Flyway</className>
+      <method><n>migrate</n></method>
+    </pointcut>
+
+    <!-- Hibernate persist/merge — shows ORM overhead in DB segments -->
+    <pointcut transactionStartPoint="false"
+              metricNameFormat="Custom/Hibernate/{method}">
+      <className>org.hibernate.internal.SessionImpl</className>
+      <method><n>persist</n></method>
+    </pointcut>
+    <pointcut transactionStartPoint="false"
+              metricNameFormat="Custom/Hibernate/{method}">
+      <className>org.hibernate.internal.SessionImpl</className>
+      <method><n>merge</n></method>
+    </pointcut>
+  </instrumentation>
+</extension>
