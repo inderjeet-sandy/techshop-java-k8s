@@ -3,6 +3,7 @@ package com.techshop.service;
 import com.newrelic.api.agent.NewRelic;
 import com.newrelic.api.agent.Token;
 import com.newrelic.api.agent.Trace;
+import com.techshop.config.ChaosConfig;
 import com.techshop.config.MetricsConfig;
 import com.techshop.model.Order;
 import com.techshop.model.OrderItem;
@@ -11,7 +12,6 @@ import com.techshop.repository.OrderRepository;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -56,21 +56,19 @@ public class OrderService {
     private final MetricsConfig.TechShopMetrics metrics;
     private final Random random = new Random();
 
-    @Value("${techshop.feature.slow-checkout-enabled:false}")
-    private boolean slowCheckoutEnabled;
-
-    @Value("${techshop.feature.payment-errors-enabled:false}")
-    private boolean paymentErrorsEnabled;
-
     @Value("${techshop.async.order-processing-delay:500}")
     private long orderProcessingDelayMs;
 
+    private final ChaosConfig chaosConfig;
+
     public OrderService(OrderRepository orderRepository,
                         ProductService productService,
-                        MetricsConfig.TechShopMetrics metrics) {
+                        MetricsConfig.TechShopMetrics metrics,
+                        ChaosConfig chaosConfig) {
         this.orderRepository = orderRepository;
         this.productService  = productService;
         this.metrics         = metrics;
+        this.chaosConfig     = chaosConfig;
     }
 
     @Trace(dispatcher = true)
@@ -159,13 +157,13 @@ public class OrderService {
     private void processPayment(Long orderId) {
         NewRelic.addCustomParameter("step", "processPayment");
 
-        if (slowCheckoutEnabled) {
+        if (chaosConfig.isSlowCheckoutEnabled()) {
             sleep(2000 + random.nextInt(3000)); // 2-5s delay
         } else {
             sleep(100 + random.nextInt(200));
         }
 
-        if (paymentErrorsEnabled && random.nextInt(100) < 5) {
+        if (chaosConfig.isPaymentErrorsEnabled() && random.nextInt(100) < 5) {
             throw new RuntimeException("Payment processor timeout — orderId=" + orderId);
         }
     }

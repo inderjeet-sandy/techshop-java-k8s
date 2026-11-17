@@ -2,12 +2,12 @@ package com.techshop.service;
 
 import com.newrelic.api.agent.NewRelic;
 import com.newrelic.api.agent.Trace;
+import com.techshop.config.ChaosConfig;
 import com.techshop.config.MetricsConfig;
 import com.techshop.model.Product;
 import com.techshop.repository.ProductRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -30,13 +30,14 @@ public class ProductService {
     private final ProductRepository productRepository;
     private final MetricsConfig.TechShopMetrics metrics;
 
-    @Value("${techshop.feature.n-plus-one-enabled:false}")
-    private boolean nPlusOneEnabled;
+    private final ChaosConfig chaosConfig;
 
     public ProductService(ProductRepository productRepository,
-                          MetricsConfig.TechShopMetrics metrics) {
+                          MetricsConfig.TechShopMetrics metrics,
+                          ChaosConfig chaosConfig) {
         this.productRepository = productRepository;
         this.metrics           = metrics;
+        this.chaosConfig       = chaosConfig;
     }
 
     @Trace
@@ -44,7 +45,7 @@ public class ProductService {
         long start = System.currentTimeMillis();
         NewRelic.addCustomParameter("products.queryType", "all");
 
-        List<Product> products = nPlusOneEnabled
+        List<Product> products = chaosConfig.isNPlusOneEnabled()
             ? getAllProductsNPlusOne()
             : productRepository.findByStockQuantityGreaterThan(0);
 

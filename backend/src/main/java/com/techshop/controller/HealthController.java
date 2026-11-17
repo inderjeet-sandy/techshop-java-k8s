@@ -1,6 +1,7 @@
 package com.techshop.controller;
 
 import com.newrelic.api.agent.NewRelic;
+import com.techshop.config.ChaosConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -14,6 +15,9 @@ public class HealthController {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private ChaosConfig chaosConfig;
 
     @GetMapping("/health")
     public ResponseEntity<Map<String, Object>> health() {
@@ -30,13 +34,32 @@ public class HealthController {
         ));
     }
 
+    /** GET /api/chaos — returns current state of all chaos flags */
+    @GetMapping("/chaos")
+    public ResponseEntity<Map<String, Boolean>> getChaosState() {
+        return ResponseEntity.ok(chaosConfig.snapshot());
+    }
+
+    /** POST /api/chaos — toggle a chaos flag at runtime, no pod restart needed */
     @PostMapping("/chaos")
-    public ResponseEntity<Map<String, Object>> chaos(@RequestBody Map<String, Object> body) {
-        String flag  = (String) body.get("flag");
+    public ResponseEntity<Map<String, Object>> setChaos(@RequestBody Map<String, Object> body) {
+        String  flag    = (String)  body.get("flag");
         Boolean enabled = (Boolean) body.getOrDefault("enabled", false);
+
+        try {
+            chaosConfig.toggle(flag, enabled);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+
+        // Record the toggle in New Relic for observability
         NewRelic.getAgent().getInsights().recordCustomEvent("ChaosToggleEvent",
             Map.of("flag", flag, "enabled", enabled));
-        return ResponseEntity.ok(Map.of("flag", flag, "enabled", enabled,
-            "note", "Restart pod or use kubectl set env to apply"));
+
+        return ResponseEntity.ok(Map.of(
+            "flag",    flag,
+            "enabled", enabled,
+            "state",   chaosConfig.snapshot()
+        ));
     }
 }
