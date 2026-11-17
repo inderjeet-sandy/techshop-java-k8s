@@ -199,21 +199,6 @@ spec:
   type: ClusterIP
 
 ---
-# 06b - NR Browser Agent ConfigMap
-# NOTE: Before applying, replace the placeholder below with the actual
-# New Relic Browser snippet from: one.newrelic.com → Integrations & Agents
-# → Browser monitoring → Place a JavaScript snippet → Copy snippet
-# DO NOT commit the real snippet — it contains your license key.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: nr-browser-agent
-  namespace: techshop-java
-data:
-  nr-agent.js: |
-    # PASTE_NR_BROWSER_SNIPPET_HERE
-
----
 # 07 - Frontend Deployment
 apiVersion: apps/v1
 kind: Deployment
