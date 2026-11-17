@@ -441,11 +441,112 @@ kubectl delete namespace techshop-java
 
 ## New Relic Browser Agent
 
-The Browser snippet placeholder in `frontend/index.html` needs to be replaced with your actual snippet:
+The frontend is a **static React app served by Nginx** — the Java agent cannot inject the Browser snippet automatically (that only works for server-rendered apps). Instead, the snippet is mounted as a Kubernetes ConfigMap and served as a standalone JS file, with Nginx injecting a `<script>` tag into every HTML response via `sub_filter`.
 
-1. New Relic → Add Data → Browser → Create application → `TechShop-Frontend`
-2. Copy the JavaScript snippet
-3. Paste it inside the `<head>` tag in `frontend/index.html`
-4. Rebuild and push the frontend image
+### Why this approach
 
-Once added, Browser links to APM distributed traces through the W3C `traceparent` header that Nginx passes through to the backend.
+| Approach | Works? | Why |
+|----------|--------|-----|
+| APM auto-inject | ❌ | Java never serves the HTML — Nginx does |
+| Bake into Docker image | ❌ | Requires rebuild every time snippet changes |
+| Embed in `index.html` | ❌ | License key in git, requires rebuild |
+| **ConfigMap + nginx sub_filter** | ✅ | No rebuild, key stays out of git, hot-swappable |
+
+### Setup (one-time per cluster)
+
+**Step 1 — Get your Browser snippet**
+1. Go to `one.newrelic.com → Integrations & Agents → Browser monitoring`
+2. Choose **"Place a JavaScript snippet in frontend code"**
+3. Name the app `TechShop-Frontend`
+4. Copy the full snippet
+
+**Step 2 — Strip the `<script>` wrapper tags**
+
+The snippet from New Relic is wrapped in `<script>...</script>` tags for inline HTML use. Since Nginx serves it as a standalone `.js` file, the tags must be removed — otherwise the browser throws `Uncaught SyntaxError: Unexpected token '<'`.
+
+```bash
+# Strip first line (<script ...>) and last line (</script>)
+sed '1{/^<script/d}; ${/<\/script>/d}' ~/Downloads/snippet.js > /tmp/nr-agent-clean.js
+
+# Verify — should start with ;window.NREUM, not <script>
+head -1 /tmp/nr-agent-clean.js
+```
+
+**Step 3 — Create the ConfigMap**
+
+```bash
+kubectl create configmap nr-browser-agent \
+  --from-file=nr-agent.js=/tmp/nr-agent-clean.js \
+  -n techshop-java
+```
+
+> ⚠️ This ConfigMap is **not in `manifests.yaml`** — the snippet contains your NR license key and must never be committed to git. Manage it directly in the cluster.
+
+**Step 4 — Apply the manifest and restart**
+
+The `manifests.yaml` already contains:
+- `nginx-config` ConfigMap with `sub_filter` to inject `<script src="/nr-agent.js"></script>` into every HTML response
+- Frontend Deployment with both ConfigMaps mounted as volumes
+
+```bash
+kubectl apply -f k8s/manifests.yaml
+kubectl rollout restart deployment/techshop-java-frontend -n techshop-java
+```
+
+**Step 5 — Verify**
+
+```bash
+# Check the script tag is injected
+curl -s http://localhost:8080 | grep "nr-agent"
+# Expected: <script type="text/javascript" src="/nr-agent.js"></script></head>
+
+# Check the JS file is served correctly (should start with ;window.NREUM)
+curl -s http://localhost:8080/nr-agent.js | head -1
+```
+
+### How it works end-to-end
+
+```
+Browser loads http://localhost:8080
+    → Nginx serves index.html
+    → sub_filter injects <script src="/nr-agent.js"></script> before </head>
+    → Browser fetches /nr-agent.js (served from nr-browser-agent ConfigMap)
+    → NR Browser agent initialises, adds traceparent header to all API calls
+    → React calls /api/products → Nginx proxies to backend with traceparent header
+    → Java APM agent reads traceparent → links browser session to backend transaction
+    → Full distributed trace: Browser click → APM transaction visible in NR
+```
+
+### Updating the snippet
+
+If you need to rotate the snippet (e.g. after regenerating in New Relic UI):
+
+```bash
+# Strip tags from new snippet file
+sed '1{/^<script/d}; ${/<\/script>/d}' ~/Downloads/new-snippet.js > /tmp/nr-agent-clean.js
+
+# Replace the ConfigMap
+kubectl delete configmap nr-browser-agent -n techshop-java
+kubectl create configmap nr-browser-agent \
+  --from-file=nr-agent.js=/tmp/nr-agent-clean.js \
+  -n techshop-java
+
+# Restart to pick up new ConfigMap
+kubectl rollout restart deployment/techshop-java-frontend -n techshop-java
+```
+
+### Verifying distributed tracing is working
+
+Once Browser data appears, confirm end-to-end DT linkage:
+
+```sql
+-- Check Browser data is flowing
+FROM PageView SELECT count(*) WHERE appName = 'TechShop-Frontend' SINCE 30 minutes ago
+
+-- Check DT is linking browser → backend
+FROM Transaction SELECT count(*) 
+WHERE appName = 'TechShop-Backend' AND traceId IS NOT NULL 
+SINCE 30 minutes ago
+```
+
+In New Relic UI: **Browser → TechShop-Frontend → Session traces** — click any trace and you should see the backend APM spans linked inline.
