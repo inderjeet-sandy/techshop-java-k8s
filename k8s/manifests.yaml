@@ -60,16 +60,27 @@ data:
   default.conf: |
     server {
         listen 80;
+        server_name _;
+
+        # Inject NR Browser agent snippet into every HTML response
+        sub_filter_once on;
+        sub_filter "</head>" "<script type=\"text/javascript\" src=\"/nr-agent.js\"></script></head>";
+
         location / {
             root /usr/share/nginx/html;
             index index.html;
             try_files $uri $uri/ /index.html;
+            add_header Cache-Control "no-cache";
         }
         location /api/ {
             proxy_pass http://techshop-java-backend-svc:8080;
-            proxy_set_header Host $host;
-            proxy_set_header traceparent $http_traceparent;
-            proxy_set_header tracestate  $http_tracestate;
+            proxy_set_header Host              $host;
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            # W3C trace context headers for Browser → APM distributed tracing
+            proxy_set_header traceparent  $http_traceparent;
+            proxy_set_header tracestate   $http_tracestate;
+            proxy_set_header newrelic     $http_newrelic;
             proxy_read_timeout 60s;
         }
         location /health {
@@ -188,6 +199,21 @@ spec:
   type: ClusterIP
 
 ---
+# 06b - NR Browser Agent ConfigMap
+# NOTE: Before applying, replace the placeholder below with the actual
+# New Relic Browser snippet from: one.newrelic.com → Integrations & Agents
+# → Browser monitoring → Place a JavaScript snippet → Copy snippet
+# DO NOT commit the real snippet — it contains your license key.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nr-browser-agent
+  namespace: techshop-java
+data:
+  nr-agent.js: |
+    # PASTE_NR_BROWSER_SNIPPET_HERE
+
+---
 # 07 - Frontend Deployment
 apiVersion: apps/v1
 kind: Deployment
@@ -236,6 +262,19 @@ spec:
               port: 80
             initialDelaySeconds: 5
             periodSeconds: 10
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
+            - name: nr-agent
+              mountPath: /usr/share/nginx/html/nr-agent.js
+              subPath: nr-agent.js
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: nginx-config
+        - name: nr-agent
+          configMap:
+            name: nr-browser-agent
       terminationGracePeriodSeconds: 30
 
 ---
